@@ -29,6 +29,8 @@ random.seed(42)
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
 
+import verstack
+
 ##################
 ## help function
 ###################
@@ -137,12 +139,14 @@ def add_fourier_terms(df, year_k, week_k, day_k):
 ## data import
 #####################
 train_df = pd.read_csv('dataset/data_city/task1_city_tr_data.csv',index_col=0)
-test_df = pd.read_csv('dataset/data_city/task1_ts_final_data.csv',index_col=0)
+#test_df = pd.read_csv('dataset/data_city/task1_ts_final_data.csv',index_col=0)
 sample_df = pd.read_csv('dataset/data_city/sample_city.csv',index_col=0)
 test_df_xgb = pd.read_csv('dataset/data_city/city_ts_final.csv',index_col=0)
 
-train_df.drop(['kovo_Away', 'kovo_Home', 'kovo_No', 'week_weekend'], axis=1, inplace=True)
-test_df.drop(['kovo_Away', 'kovo_Home', 'kovo_No', 'week_weekend'], axis=1, inplace=True)
+train_df.drop('index', axis=1, inplace=True)
+
+#train_df.drop(['kovo_Away', 'kovo_Home', 'kovo_No', 'week_weekend'], axis=1, inplace=True)
+#test_df.drop(['kovo_Away', 'kovo_Home', 'kovo_No', 'week_weekend'], axis=1, inplace=True)
 test_df_xgb.drop(['year','month','day','hour'], axis=1, inplace=True)
 
 def season_calc(month):
@@ -192,12 +196,8 @@ def feature_preprocessing(train_df) :
 
     return train_df
 
-train_df = feature_preprocessing(train_df)
-test_df = feature_preprocessing(test_df)
-test_df_xgb = feature_preprocessing(test_df_xgb)
-
 train_df.columns
-test_df.columns
+# test_df.columns
 test_df_xgb.columns
 
 ####################
@@ -206,20 +206,20 @@ test_df_xgb.columns
 
 # 결측값 개수 확인
 train_df.isna().sum() # 'y' : 8
-test_df.isna().sum()
+test_df_xgb.isna().sum()
 
 # 값 분포 확인
-train_df.describe() # 극단적으로 절댓값이 큰 값들이 존재
+#train_df.describe() # 극단적으로 절댓값이 큰 값들이 존재
+#train_df.describe(include='o')
 
 # outlier를 missing value로 대체
 train_df.loc[(abs(train_df['y']) > 2000) | (train_df['y'] == 0), 'y'] = np.NaN # 이상치를 missing value로 전환 -> 153개의 missing value 생성
+train_df['y'].isna().sum()
 
 # index를 ds로 변경
-train_df.set_index('ds', inplace=True)
+#train_df.set_index('ds', inplace=True)
 train_df.head()
-
-test_df.set_index('ds', inplace=True)
-test_df_xgb.set_index('ds',inplace=True)
+#test_df_xgb.set_index('ds',inplace=True)
 
 #train_df['y'].plot()
 #plt.show()
@@ -272,14 +272,19 @@ train_df_Interpolation_spline = missing_value_func(train_df,'spline')
 
 train_df_Interpolation_time = missing_value_func(train_df, 'time')
 
-train_df_Interpolation_time.info()
+train_df_Interpolation_time = feature_preprocessing(train_df_Interpolation_time)
+# test_df = feature_preprocessing(test_df)
+test_df_xgb = feature_preprocessing(test_df_xgb)
+
+train_df_Interpolation_time.set_index('ds', inplace=True)
+test_df_xgb.set_index('ds',inplace=True)
 
 ########################################################################################
 ## Cross Validation
 #########################################################################################
 
 train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df.copy()
+# test_df_final = test_df.copy()
 test_df_xgb_final = test_df_xgb.copy()
 
 import xgboost as xgb
@@ -369,282 +374,10 @@ def xgboost_cross_validation(train_df, test_df, params) :
     return preds_boost_tuned, X_test
 
 #########################################################################################
-## Naive forecast 
-#########################################################################################
-"""
-train_df_final = train_df_Interpolation_linear.copy()
-test_df_final = test_df_xgb.copy()
-
-train_df_final.info()
-
-train_df_naive = train_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-train_df_naive = train_df_naive.dropna()
-test_df_naive = test_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-
-train_df_naive.info()
-
-pred_y, X_test = xgboost_cross_validation(train_df_naive,test_df_naive,param_grid)
-
-result = []
-for iter in range(len(X_test)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test.index[:8425])
-result.columns = sample_df.columns
-
-result.to_csv('result/xgb_naive_origin_rain.csv')
-"""
-
-#########################################################################################
-## add 24 Time lag -> 108
-#########################################################################################
-"""
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## lag variable 생성
-for i in range(48):
-    train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
-
-for i in range(48):
-    test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
-
-train_df_lag = train_df_final.drop(['day'], axis=1)
-train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day'], axis=1)
-
-pred_y , X_test = xgboost_cross_validation(train_df_lag, test_df_lag, param_grid)
-
-result = []
-for iter in range(len(X_test)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test.index[:8425])
-sample_df.drop('datetime', axis=1, inplace=True)
-result.columns = sample_df.columns
-
-result.to_csv('xgb_1to24_lag.csv')
-sample_df
-
-result.shape
-"""
-
-#########################################################################################
-## add only 24 lag
-#########################################################################################
-"""
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## lag variable 생성
-train_df_final['lag24'] = train_df_final['y'].shift(24)
-test_df_final['lag24'] = test_df_final['y'].shift(24)
-
-train_df_final.columns
-
-# na 제거
-train_df_final.dropna(inplace=True)
-
-# 필요없는 열 제거
-train_df_lag = train_df_final.drop(['day'], axis=1)
-test_df_lag = test_df_final.drop(['day'], axis=1)
-
-pred_y, X_test = xgboost_cross_validation(train_df_lag, test_df_lag, param_grid)
-
-# 결과 set 만들기
-result = []
-for iter in range(len(X_test_24)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test_24.index[:8425])
-sample_df.drop('datetime', axis=1, inplace=True)
-result.columns = sample_df.columns
-
-result.to_csv('result/xgb_24_lag.csv')
-"""
-
-#########################################################################################
-## fouier
-#########################################################################################
-"""
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## fourier
-test_df_final.index = pd.to_datetime(test_df_final.index)
-add_fourier_terms(train_df_final, year_k= 5, week_k=5 , day_k=5)
-add_fourier_terms(test_df_final, year_k= 5, week_k=5 , day_k=5)
-
-test_df_final.columns
-
-# 필요없는 열 제거
-train_df_fourier = train_df_final.drop(['day'], axis=1)
-test_df_fourier = test_df_final.drop(['day'], axis=1)
-
-pred_y, X_test = xgboost_cross_validation(train_df_fourier, test_df_fourier, param_grid)
-
-# 결과 set 만들기
-result = []
-for iter in range(len(X_test)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test.index[:8425])
-sample_df.drop('datetime', axis=1, inplace=True)
-result.columns = sample_df.columns
-
-result.to_csv('result/xgb_fourier.csv')
-"""
-
-#########################################################################################
-## lag 1 ~ 24 + other feature
-#########################################################################################
-"""
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## lag variable 생성
-for i in range(24):
-    train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
-
-for i in range(24):
-    test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
-
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-
-def add_feature(df) :
-
-    df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
-    df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
-    df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
-
-    df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
-    df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
-    df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
-
-    df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
-    df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
-    df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
-
-    df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
-    df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
-    df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
-
-    return df
-
-train_df_mul = add_feature(train_df_lag)
-test_df_mul = add_feature(test_df_lag)
-train_df_mul.dropna(inplace=True)
-
-train_df_mul.isna()
-
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
-
-result = []
-for iter in range(len(X_test)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test.index[:8425])
-result.columns = sample_df.columns
-
-result.to_csv('result/xgb_lag_mul.csv')
-"""
-
-#########################################################################################
-## lag 1 ~ 24 + fourier + rolling mean, std + hour, month, year 삭제
-#########################################################################################
-
-"""
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## lag variable 생성
-for i in range(24):
-    train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
-
-for i in range(24):
-    test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
-
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
-
-def add_feature(df) :
-
-    df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
-    df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
-    df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
-
-    df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
-    df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
-    df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
-
-    #df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
-    #df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
-    #df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
-
-    #df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
-    #df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
-    #df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
-
-    df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
-    df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
-    df['rolling_24_med'] = df['y'].shift(1).rolling(24).median()
-
-    return df
-
-test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 5, week_k=5, day_k=5)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 5, week_k=5, day_k=5)
-
-train_df_mul = add_feature(train_df_lag)
-test_df_mul = add_feature(test_df_lag)
-train_df_mul.dropna(inplace=True)
-
-train_df_mul.columns
-
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
-
-result = []
-for iter in range(len(X_test)-336) :
-
-    index = list(range(0+iter, 336+iter))
-    mid = pred_y[index]
-    result.append(mid)
-
-result = np.array(result)
-result = pd.DataFrame(result, index=X_test.index[:8425])
-result.columns = sample_df.columns
-
-result.to_csv('result/xgb_lag_mul_fourier.csv')
-"""
-
-#########################################################################################
 ## lag 168 + fourier + rolling mean, std 
 #########################################################################################
 
-train_df_final = train_df_Interpolation_time.copy()
+train_df_final = train_df_Imputed.copy()
 test_df_final = test_df_xgb.copy()
 
 ## lag variable 생성
@@ -678,7 +411,6 @@ def add_feature(df) :
     df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
     df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
     
-
     #df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
     #df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
     #df['rolling_24_med'] = df['y'].shift(1).rolling(24).median()
@@ -686,8 +418,8 @@ def add_feature(df) :
     return df
 
 test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 11, week_k=12, day_k=12)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 11, week_k=12, day_k=12)
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
 
 train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
@@ -735,9 +467,17 @@ train_df_lag = train_df_lag.dropna()
 test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 
+test_df_lag.index = pd.to_datetime(test_df_lag.index)
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+
 train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
 train_df_mul.dropna(inplace=True)
+
+pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
+
+##########################################################################################
 
 xgbtuned = xgb.XGBRegressor(subsample=0.9, n_estimators=115, min_child_weight=7.0, max_depth=6, learning_rate=0.045, gamma=0.25, colsample_bytree=0.9,
                             colsample_bylevel=0.5)
@@ -765,3 +505,179 @@ result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_hyper_comp.csv')
+
+#########################################################################################
+## 결과 제출
+#########################################################################################
+
+train_df_final = train_df_Interpolation_time.copy()
+test_df_final = test_df_xgb.copy()
+
+param_grid = {
+        'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
+        'learning_rate': [0.001, 0.01, 0.025,0.05, 0.075, 0.1, 0.2, 0.3],
+        'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'min_child_weight': [0.5, 1.0, 3.0, 5.0, 7.0, 10.0],
+        'gamma': [0, 0.25, 0.5, 1.0],
+        'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
+
+def make_result(train_df, test_df) :
+
+    ## lag variable 생성
+    for i in range(24):
+        train_df['lag'+str(i+1)] = train_df['y'].shift(i+1)
+
+    for i in range(24):
+        test_df['lag'+str(i+1)] = test_df['y'].shift(i+1)
+
+    train_df_lag = train_df.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
+    train_df_lag = train_df_lag.dropna()
+    test_df_lag = test_df.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
+
+    test_df_lag.index = pd.to_datetime(test_df_lag.index)
+    train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
+    test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+
+    train_df_mul = add_feature(train_df_lag)
+    test_df_mul = add_feature(test_df_lag)
+    train_df_mul.dropna(inplace=True)
+
+    X_train = train_df_mul.drop('y', axis=1)
+    y_train = train_df_mul.y
+
+    X_test = test_df_mul.drop('y', axis=1)
+    y_test = test_df_mul.y
+
+    # Best params: {'subsample': 0.9, 'n_estimators': 115, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.04, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
+    # model 생성
+    xgbtuned = xgb.XGBRegressor()
+    tscv = TimeSeriesSplit(n_splits=5)
+    xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
+                                    scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                    cv=tscv, verbose=2, random_state=42)
+    
+    # model 데이터 생성
+    pred_y = pd.DataFrame([])
+    
+    for iter in range(len(X_test)//336) :
+        if iter == 0 :
+            X_test = X_test[:336*(1+iter)]
+
+            xgbtunedreg.fit(X_train, y_train)
+            preds= xgbtunedreg.predict(X_test)
+            pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+        
+        else :
+            X_train_add = X_train[:iter*336]
+            X_train.dropna(inplace=True)
+            y_train_add = y_test[:iter*336]
+            X_train = pd.concat([X_train,X_train_add], axis=0)
+            y_train = pd.concat([y_train, y_train_add], axis=0)
+
+            X_test = X_test[(iter-1)*336:336*(1+iter)]
+
+            xgbtunedreg.fit(X_train, y_train)
+            preds = xgbtunedreg.predict(X_test)
+            pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+
+    return pred_y
+
+
+## lag variable 생성
+for i in range(24):
+    train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
+
+for i in range(24):
+    test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
+
+train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+    'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
+train_df_lag = train_df_lag.dropna()
+test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+    'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
+
+test_df_lag.index = pd.to_datetime(test_df_lag.index)
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+
+train_df_mul = add_feature(train_df_lag)
+test_df_mul = add_feature(test_df_lag)
+train_df_mul.dropna(inplace=True)
+
+X_train = train_df_mul.drop('y', axis=1)
+y_train = train_df_mul.y
+
+X_test = test_df_mul.drop('y', axis=1)
+y_test = test_df_mul.y
+
+# Best params: {'subsample': 0.9, 'n_estimators': 115, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.04, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
+# model 생성
+xgbtuned = xgb.XGBRegressor(random_state=42)
+tscv = TimeSeriesSplit(n_splits=5)
+xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
+                                scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                cv=tscv, verbose=2, random_state=42)
+  
+# model 데이터 생성
+pred_y = pd.DataFrame([])
+    
+for iter in range(len(X_test)//336) :
+    if iter == 0 :
+        #X_train_add = X_test[:iter*336]
+        #X_train.dropna(inplace=True)
+        #y_train_add = y_test[:iter*336]
+        #X_train = pd.concat([X_train,X_train_add], axis=0)
+
+        test = X_test[:336*(1+iter)]
+
+        xgbtunedreg.fit(X_train, y_train, verbose=True)
+        preds= xgbtunedreg.predict(test)
+        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+
+    elif iter == len(X_test)//336:
+
+        test = X_test[(iter)*336:]
+
+        xgbtunedreg.fit(X_train, y_train, verbose=True)
+        preds = xgbtunedreg.predict(test)
+        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+
+        print('now step =', iter)
+
+    else :
+        X_train_add = X_test[:iter*336]
+        y_train_add = y_test[:iter*336]
+        X_train = pd.concat([X_train, X_train_add], axis=0)
+        y_train = pd.concat([y_train, y_train_add], axis=0)
+
+        test = X_test[(iter)*336:336*(1+iter)]
+
+        xgbtunedreg.fit(X_train, y_train, verbose=True)
+        preds = xgbtunedreg.predict(test)
+        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+        print('now step =', iter)
+
+mae = mean_absolute_error(y_test, pred_y)
+print(mae)
+
+pred_y.reset_index(inplace=True)
+pred_y.drop('index',axis=1,inplace=True)
+
+result = []
+for iter in range(len(X_test)-336) :
+
+    mid = pred_y[0+iter:336+iter]
+    result.append(mid)
+
+result = np.array(result)
+result = result.squeeze()
+result = pd.DataFrame(result, index=X_test.index[:8425])
+result.columns = sample_df.columns
+
+result.to_csv('plus_train.csv')
+
+#보간법 대신 xgboost를 이용한 결측값 채우기도 가능한데 이때 사용된 regressor에 대한 feature importances를 구해볼 필요가 있음
