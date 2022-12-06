@@ -26,6 +26,9 @@ from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 import random
 random.seed(42)
 
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.pipeline import Pipeline
+
 ##################
 ## help function
 ###################
@@ -107,6 +110,29 @@ def time(x):
     else:
         return 'night'
 
+def add_fourier_terms(df, year_k, week_k, day_k):
+    
+    for k in range(1, year_k+1):
+        # year has a period of 365.25 including the leap year
+        df['year_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.dayofyear/365.25) 
+        df['year_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.dayofyear/365.25)
+
+    for k in range(1, week_k+1):
+        
+         # week has a period of 7
+        df['week_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.dayofweek/7)
+        df['week_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.dayofweek/7)
+
+
+    for k in range(1, day_k+1):
+        
+        # day has period of 24
+        df['hour_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.hour/24)
+        df['hour_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.hour/24)
+
+    return df
+
+
 #####################
 ## data import
 #####################
@@ -153,10 +179,10 @@ def feature_preprocessing(train_df) :
 
     # hour 삭제
     # train_df.drop(['hour'], inplace=True, axis=1)
-    train_df.drop(['weekday'], inplace=True, axis=1)
+    # train_df.drop(['weekday'], inplace=True, axis=1)
 
     # dtype 변경
-    cat_cols = ['time_of_day','season','time']
+    cat_cols = ['time_of_day','season','time','weekday','holiday','warning']
     #cat_cols = ['hour','weekday','time_of_day']
     for col in cat_cols:
         train_df[col] = train_df[col].astype('category')
@@ -186,7 +212,7 @@ test_df.isna().sum()
 train_df.describe() # 극단적으로 절댓값이 큰 값들이 존재
 
 # outlier를 missing value로 대체
-train_df.loc[(abs(train_df['y']) > 2500) | (train_df['y'] == 0), 'y'] = np.NaN # 이상치를 missing value로 전환 -> 153개의 missing value 생성
+train_df.loc[(abs(train_df['y']) > 2000) | (train_df['y'] == 0), 'y'] = np.NaN # 이상치를 missing value로 전환 -> 153개의 missing value 생성
 
 # index를 ds로 변경
 train_df.set_index('ds', inplace=True)
@@ -246,6 +272,7 @@ train_df_Interpolation_spline = missing_value_func(train_df,'spline')
 
 train_df_Interpolation_time = missing_value_func(train_df, 'time')
 
+train_df_Interpolation_time.info()
 
 ########################################################################################
 ## Cross Validation
@@ -316,7 +343,7 @@ Mean Absolute Percentage Error: 71.52 %
 def xgboost_cross_validation(train_df, test_df, params) :
 
     xgbtuned = xgb.XGBRegressor()
-    tscv = TimeSeriesSplit(n_splits=7)
+    tscv = TimeSeriesSplit(n_splits=5)
     xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=params , 
                                    scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
                                    cv=tscv, verbose=2, random_state=42)
@@ -337,13 +364,14 @@ def xgboost_cross_validation(train_df, test_df, params) :
     preds_boost_tuned = xgbtunedreg.predict(X_test)
 
     error_metrics(preds_boost_tuned, y_test, model_name='Tuned XGBoost with Fourier terms', test=True)
-    error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
+    #error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
 
     return preds_boost_tuned, X_test
 
 #########################################################################################
 ## Naive forecast 
 #########################################################################################
+"""
 train_df_final = train_df_Interpolation_linear.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -369,11 +397,12 @@ result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_naive_origin_rain.csv')
+"""
 
 #########################################################################################
 ## add 24 Time lag -> 108
 #########################################################################################
-
+"""
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -406,11 +435,12 @@ result.to_csv('xgb_1to24_lag.csv')
 sample_df
 
 result.shape
+"""
 
 #########################################################################################
 ## add only 24 lag
 #########################################################################################
-
+"""
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -443,34 +473,12 @@ sample_df.drop('datetime', axis=1, inplace=True)
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_24_lag.csv')
-
+"""
 
 #########################################################################################
 ## fouier
 #########################################################################################
-
-def add_fourier_terms(df, year_k, week_k, day_k):
-    
-    for k in range(1, year_k+1):
-        # year has a period of 365.25 including the leap year
-        df['year_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.dayofyear/365.25) 
-        df['year_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.dayofyear/365.25)
-
-    for k in range(1, week_k+1):
-        
-        # week has a period of 7
-        df['week_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.dayofweek/7)
-        df['week_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.dayofweek/7)
-
-
-    for k in range(1, day_k+1):
-        
-        # day has period of 24
-        df['hour_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.hour/24)
-        df['hour_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.hour/24)
-
-    return df
-
+"""
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -501,11 +509,12 @@ sample_df.drop('datetime', axis=1, inplace=True)
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_fourier.csv')
+"""
 
 #########################################################################################
 ## lag 1 ~ 24 + other feature
 #########################################################################################
-
+"""
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -560,11 +569,13 @@ result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_lag_mul.csv')
+"""
 
 #########################################################################################
 ## lag 1 ~ 24 + fourier + rolling mean, std + hour, month, year 삭제
 #########################################################################################
 
+"""
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
@@ -575,9 +586,9 @@ for i in range(24):
 for i in range(24):
     test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
 
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
+train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
 train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
+test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night'], axis=1)
 
 def add_feature(df) :
 
@@ -627,7 +638,7 @@ result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
 result.to_csv('result/xgb_lag_mul_fourier.csv')
-
+"""
 
 #########################################################################################
 ## lag 168 + fourier + rolling mean, std 
@@ -643,12 +654,11 @@ for i in range(24):
 for i in range(24):
     test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
 
-#train_df_final['lag'+str(24*7)] = train_df_final['y'].shift(24*7)
-#test_df_final['lag'+str(24*7)] = test_df_final['y'].shift(24*7)
-
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
+train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
+test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 
 def add_feature(df) :
 
@@ -667,6 +677,7 @@ def add_feature(df) :
     df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
     df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
     df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
+    
 
     #df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
     #df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
@@ -675,8 +686,8 @@ def add_feature(df) :
     return df
 
 test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 5, week_k=5, day_k=5)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 5, week_k=5, day_k=5)
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 11, week_k=12, day_k=12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 11, week_k=12, day_k=12)
 
 train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
@@ -699,109 +710,58 @@ result.columns = sample_df.columns
 
 result.to_csv('result/xgb_lag_mul_fourier.csv')
 
-########################################################
-## prophet + LightGBM
-########################################################
+#########################################################################################
+## lag 168 + fourier + rolling mean, std 
+#########################################################################################
 
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night', 'dayofyear'], axis=1)
+## lag variable 생성
+def add_lag(train_df_final, test_df_final) :
+    for i in range(24):
+        train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
 
-train_df_lag['ds'] = train_df_lag.index
-test_df_lag['ds'] = test_df_lag.index
+    for i in range(24):
+        test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
 
+    return train_df_final, test_df_final
 
-import prophet
+train_df_lag, test_df_lag = add_lag(train_df_final, test_df_final)
 
-m = prophet.Prophet(
-                growth='linear',
-                seasonality_mode='multiplicative',
-                interval_width=0.95,
-                daily_seasonality=True,
-                weekly_seasonality=True,
-                yearly_seasonality=True,changepoint_range=0.9, changepoint_prior_scale=0.5, seasonality_prior_scale=0.1
-            )
+train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
+train_df_lag = train_df_lag.dropna()
+test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
+       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 
-m.fit(train_df_lag)
-#extract features from data using prophet to predict train set
-predictions_train = m.predict(train_df_lag.drop('y', axis=1))
-#extract features from data using prophet to predict test set
-predictions_test = m.predict(test_df_lag.drop('y', axis=1))
-#merge train and test predictions
-predictions = pd.concat([predictions_train, predictions_test], axis=0)
+train_df_mul = add_feature(train_df_lag)
+test_df_mul = add_feature(test_df_lag)
+train_df_mul.dropna(inplace=True)
 
-df = pd.concat([train_df_lag,test_df_lag],axis=0)
-df['aa'] = range(len(df))
-df.set_index('aa',inplace=True)
+xgbtuned = xgb.XGBRegressor(subsample=0.9, n_estimators=115, min_child_weight=7.0, max_depth=6, learning_rate=0.045, gamma=0.25, colsample_bytree=0.9,
+                            colsample_bylevel=0.5)
 
-df = pd.merge(df, predictions,  how='inner')
+X_train = train_df_mul.drop('y', axis=1)
+y_train = train_df_mul.y
 
-for i in range(24):
-   df['lag'+str(i+1)] = df['y'].shift(i+1)
+X_test = test_df_mul.drop('y', axis=1)
+y_test = test_df_mul.y
 
-df.dropna(inplace=True)
-df.drop('ds',axis=1,inplace=True)
+xgbtuned.fit(X_train, y_train)
+preds_y = xgbtuned.predict(X_test)
+mae = mean_absolute_error(y_test, preds_y)
+print(mae)
 
-horizon = len(test_df_xgb)
-X = df.drop('y',axis=1)
-y = df.y
-X_train, X_test = X.iloc[:-horizon,:], X.iloc[-horizon:,:]
-y_train, y_test = y.iloc[:-horizon], y.iloc[-horizon:]
+result = []
+for iter in range(len(X_test)-336) :
 
-import optuna  # pip install optuna
-from sklearn.metrics import log_loss
-from sklearn.model_selection import StratifiedKFold
-from optuna.integration import LightGBMPruningCallback
+    index = list(range(0+iter, 336+iter))
+    mid = pred_y[index]
+    result.append(mid)
 
-def objective(trial, X, y):
-    param_grid = {
-        # "device_type": trial.suggest_categorical("device_type", ['gpu']),
-        "n_estimators": trial.suggest_categorical("n_estimators", [10000]),
-        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.3),
-        "num_leaves": trial.suggest_int("num_leaves", 20, 3000, step=20),
-        "max_depth": trial.suggest_int("max_depth", 3, 12),
-        "min_data_in_leaf": trial.suggest_int("min_data_in_leaf", 200, 10000, step=100),
-        "lambda_l1": trial.suggest_int("lambda_l1", 0, 100, step=5),
-        "lambda_l2": trial.suggest_int("lambda_l2", 0, 100, step=5),
-        "min_gain_to_split": trial.suggest_float("min_gain_to_split", 0, 15),
-        "bagging_fraction": trial.suggest_float(
-            "bagging_fraction", 0.2, 0.95, step=0.1
-        ),
-        "bagging_freq": trial.suggest_categorical("bagging_freq", [1]),
-        "feature_fraction": trial.suggest_float(
-            "feature_fraction", 0.2, 0.95, step=0.1
-        ),
-    }
+result = np.array(result)
+result = pd.DataFrame(result, index=X_test.index[:8425])
+result.columns = sample_df.columns
 
-    cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=1121218)
-
-    cv_scores = np.empty(5)
-    for idx, (train_idx, test_idx) in enumerate(cv.split(X, y)):
-        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-        y_train, y_test = y[train_idx], y[test_idx]
-
-        model = lgbm.LGBMClassifier(objective="binary", **param_grid)
-        model.fit(
-            X_train,
-            y_train,
-            eval_set=[(X_test, y_test)],
-            eval_metric="binary_logloss",
-            early_stopping_rounds=100,
-            callbacks=[
-                LightGBMPruningCallback(trial, "binary_logloss")
-            ],  # Add a pruning callback
-        )
-        preds = model.predict_proba(X_test)
-        cv_scores[idx] = log_loss(y_test, preds)
-
-    return np.mean(cv_scores)
-
-import lightgbm
-#define LightGBM model, train it and make predictions
-model = lightgbm.LGBMRegressor(random_state=42)
-model.fit(X_train, y_train)
-predictions = model.predict(X_test)
-
-mae = np.round(mean_absolute_error(y_test, predictions), 3) 
+result.to_csv('result/xgb_hyper_comp.csv')
