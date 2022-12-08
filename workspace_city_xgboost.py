@@ -29,8 +29,7 @@ random.seed(42)
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
 
-import verstack
-
+import joblib
 ##################
 ## help function
 ###################
@@ -513,16 +512,6 @@ result.to_csv('result/xgb_hyper_comp.csv')
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
-param_grid = {
-        'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
-        'learning_rate': [0.001, 0.01, 0.025,0.05, 0.075, 0.1, 0.2, 0.3],
-        'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-        'min_child_weight': [0.5, 1.0, 3.0, 5.0, 7.0, 10.0],
-        'gamma': [0, 0.25, 0.5, 1.0],
-        'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
-
 def make_result(train_df, test_df) :
 
     ## lag variable 생성
@@ -616,14 +605,37 @@ y_test = test_df_mul.y
 
 # Best params: {'subsample': 0.9, 'n_estimators': 115, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.04, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
 # model 생성
-xgbtuned = xgb.XGBRegressor(random_state=42)
+
+#X_val = X_train.loc[X_train.index >= '2020-01-01 00:00:00',:]
+#y_val = y_train.loc[y_train.index >= '2020-01-01 00:00:00']
+
+#X_train = X_train.loc[X_train.index < '2020-01-01 00:00:00',:]
+#y_train = y_train.loc[y_train.index < '2020-01-01 00:00:00']
+
+#dtrain = xgb.DMatrix(X_train, label=y_train, feature_names = X_train.columns.values)
+# dval = xgb.DMatrix(X_val, label=y_val, feature_names = X_train.columns.values)
+#dtest = xgb.DMatrix(X_test, label=y_test, feature_names = X_test.columns.values)
+
+param_grid = {
+        'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
+        'learning_rate': [0.001, 0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3],
+        'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bytree': [0.4,0.5,0.6,0.7,0.8,0.9,1.0],
+        'colsample_bylevel': [0.4,0.5,0.6,0.7,0.8,0.9,1.0],
+        'min_child_weight': [0.5, 1.0, 3.0, 5.0, 7.0, 10.0],
+        'gamma': [0, 0.25, 0.5, 1.0],
+        'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
+
+
+xgbtuned = xgb.XGBRegressor(tree_method = 'gpu_hist', random_state=42)
 tscv = TimeSeriesSplit(n_splits=5)
 xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
-                                scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                scoring='neg_mean_squared_error', n_iter=100, n_jobs=-1, 
                                 cv=tscv, verbose=2, random_state=42)
-  
+
 # model 데이터 생성
 pred_y = pd.DataFrame([])
+best_params = []
     
 for iter in range(len(X_test)//336) :
     if iter == 0 :
@@ -638,7 +650,16 @@ for iter in range(len(X_test)//336) :
         preds= xgbtunedreg.predict(test)
         pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
 
-    elif iter == len(X_test)//336:
+        best_params.append(xgbtunedreg.best_params_)
+
+        joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
+
+    elif iter == (len(X_test)//336) - 1:
+
+        X_train_add = X_test[:iter*336]
+        y_train_add = y_test[:iter*336]
+        X_train = pd.concat([X_train, X_train_add], axis=0)
+        y_train = pd.concat([y_train, y_train_add], axis=0)
 
         test = X_test[(iter)*336:]
 
@@ -648,9 +669,13 @@ for iter in range(len(X_test)//336) :
 
         print('now step =', iter)
 
+        best_params.append(xgbtunedreg.best_params_)
+
+        joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
+
     else :
         X_train_add = X_test[:iter*336]
-        y_train_add = y_test[:iter*336]
+        y_train_add = y_test[(iter-1)*336:iter*336]
         X_train = pd.concat([X_train, X_train_add], axis=0)
         y_train = pd.concat([y_train, y_train_add], axis=0)
 
@@ -660,6 +685,10 @@ for iter in range(len(X_test)//336) :
         preds = xgbtunedreg.predict(test)
         pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
         print('now step =', iter)
+
+        best_params.append(xgbtunedreg.best_params_)
+
+        joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
 
 mae = mean_absolute_error(y_test, pred_y)
 print(mae)
@@ -678,6 +707,6 @@ result = result.squeeze()
 result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
-result.to_csv('plus_train.csv')
+result.to_csv('task1_plus_train.csv')
 
 #보간법 대신 xgboost를 이용한 결측값 채우기도 가능한데 이때 사용된 regressor에 대한 feature importances를 구해볼 필요가 있음
