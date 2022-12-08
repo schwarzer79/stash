@@ -453,7 +453,7 @@ param_grid = {
 # learning_rate : [0.001, 0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3] -> 78.x
 # learning_rate : np.arange(0.01, 0.2, 0.01) -> 77.6396
 
-def make_result(train_df, test_df, param_grid) :
+def make_result(train_df, test_df, param_grid, n_iter) :
 
     ## lag variable 생성
     for i in range(24):
@@ -485,15 +485,15 @@ def make_result(train_df, test_df, param_grid) :
     print(X_train.shape, y_train.shape, X_test.shape, y_test.shape)
 
     # model 생성
-    xgbtuned = xgb.XGBRegressor(random_state=42)
+    xgbtuned = xgb.XGBRegressor(tree_method='gpu_hist',random_state=42)
     tscv = TimeSeriesSplit(n_splits=5)
     xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
-                                    scoring='neg_mean_squared_error', n_iter=35, n_jobs=-1, 
+                                    scoring='neg_mean_absolute_error', n_iter=n_iter, n_jobs=-1, 
                                     cv=tscv, verbose=2, random_state=42)
     
     # model 데이터 생성
     pred_y = pd.DataFrame([])
-    batch_size = 336
+    batch_size = 2000
     best_params = []
         
     for iter in range(len(X_test)//batch_size) :
@@ -509,6 +509,11 @@ def make_result(train_df, test_df, param_grid) :
 
         elif iter == (len(X_test)//batch_size)-1 :
 
+            X_train_add = X_test[(iter-1)*batch_size:iter*batch_size]
+            y_train_add = y_test[(iter-1)*batch_size:iter*batch_size]
+            X_train = pd.concat([X_train, X_train_add], axis=0)
+            y_train = pd.concat([y_train, y_train_add], axis=0)
+
             test = X_test[(iter)*batch_size:]
 
             xgbtunedreg.fit(X_train, y_train, verbose=True)
@@ -522,8 +527,8 @@ def make_result(train_df, test_df, param_grid) :
             print('now step =', iter)
 
         else :
-            X_train_add = X_test[:iter*batch_size]
-            y_train_add = y_test[:iter*batch_size]
+            X_train_add = X_test[(iter-1)*batch_size:iter*batch_size]
+            y_train_add = y_test[(iter-1)*batch_size:iter*batch_size]
             X_train = pd.concat([X_train, X_train_add], axis=0)
             y_train = pd.concat([y_train, y_train_add], axis=0)
 
@@ -542,11 +547,11 @@ def make_result(train_df, test_df, param_grid) :
     pred_y.reset_index(inplace=True)
     pred_y.drop('index',axis=1,inplace=True)
 
-    return pred_y, best_params
-    
-pred_y, best_params = make_result(train_df_final, test_df_final, param_grid)
+    mae = mean_absolute_error(y_test, pred_y)
 
-mae = mean_absolute_error(y_test, pred_y)
+    return pred_y, best_params, mae
+    
+pred_y, best_params, mae = make_result(train_df_final, test_df_final, param_grid, n_iter=150)
 print(mae)
 
 result = []
