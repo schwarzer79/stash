@@ -6,30 +6,26 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-import requests
-import json
 
 from datetime import datetime, timedelta
-from pandas.tseries.holiday import USFederalHolidayCalendar as calendar
-import scipy.stats
 import matplotlib.dates as mdates
 import copy
 plt.style.use('bmh')
-import plotly.graph_objects as go
 from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import OneHotEncoder
-
-from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 import random
 random.seed(42)
 
+<<<<<<< HEAD
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.pipeline import Pipeline
 
 import joblib
+=======
+import joblib
+
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 ##################
 ## help function
 ###################
@@ -133,6 +129,66 @@ def add_fourier_terms(df, year_k, week_k, day_k):
 
     return df
 
+def add_hour_fourier(df, day_k) :
+
+    
+    for k in range(1, day_k+1):
+        
+        # day has period of 24
+        df['hour_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.hour/24)
+        df['hour_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.hour/24)
+
+    return df
+
+def xgboost_cross_validation(train_df, test_df, params, n_iter=100) :
+
+    xgbtuned = xgb.XGBRegressor()
+    tscv = TimeSeriesSplit(n_splits=5)
+    xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=params , 
+                                   scoring='neg_mean_absolute_error', n_iter=n_iter, n_jobs=-1, 
+                                   cv=tscv, verbose=2, random_state=42)
+
+    X_train = train_df.drop('y', axis=1)
+    y_train = train_df.y
+
+    X_test = test_df.drop('y', axis=1)
+    y_test = test_df.y
+
+    xgbtunedreg.fit(X_train, y_train)
+    
+    best_score = xgbtunedreg.best_score_
+    best_params = xgbtunedreg.best_params_
+    print("Best score: {}".format(best_score))
+    print("Best params: {}".format(best_params))
+
+    preds_boost_tuned = xgbtunedreg.predict(X_test)
+
+    error_metrics(preds_boost_tuned, y_test, model_name='Tuned XGBoost with Fourier terms', test=True)
+    #error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
+
+    return preds_boost_tuned, X_test
+
+def add_feature(df) :
+
+    df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
+    df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
+    df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
+
+    df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
+    df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
+    df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
+    
+    df['26ema'] = df['y'].shift(1).ewm(span=26).mean()
+    df['12ema'] = df['y'].shift(1).ewm(span=12).mean()
+    df['MACD'] = (df['12ema']-df['26ema'])
+
+    df['upper_band'] = df['rolling_24_mean'] + (df['rolling_24_std']*2)
+    df['lower_band'] = df['rolling_24_mean'] - (df['rolling_24_std']*2)
+    
+    # Create Exponential moving average
+    df['ema'] = df['y'].shift(1).ewm(com=0.5).mean()
+
+    return df
 
 #####################
 ## data import
@@ -238,7 +294,9 @@ def missing_value_func(df, method, window = 5, halflife = 4) :
         df_copy['y'] = df_copy['y'].interpolate(option=method)
     elif method == 'spline' :
         df_copy['y'] = df_copy['y'].interpolate(option=method)
-    else :
+    elif method == 'time' :
+        df_copy['y'] = df_copy['y'].interpolate(option=method)
+    else : 
         df_copy['y'] = df_copy['y'].interpolate(option=method)
     df_copy = df_copy.dropna()
     return df_copy
@@ -271,6 +329,10 @@ train_df_Interpolation_spline = missing_value_func(train_df,'spline')
 
 train_df_Interpolation_time = missing_value_func(train_df, 'time')
 
+# Interpolation - polynomial
+
+train_df_Interpolation_poly = missing_value_func(train_df,'polynomial')
+
 train_df_Interpolation_time = feature_preprocessing(train_df_Interpolation_time)
 # test_df = feature_preprocessing(test_df)
 test_df_xgb = feature_preprocessing(test_df_xgb)
@@ -282,17 +344,14 @@ test_df_xgb.set_index('ds',inplace=True)
 ## Cross Validation
 #########################################################################################
 
-train_df_final = train_df_Interpolation_time.copy()
-# test_df_final = test_df.copy()
-test_df_xgb_final = test_df_xgb.copy()
-
 import xgboost as xgb
 from sklearn.model_selection import RandomizedSearchCV
 
-
+# hyperparameter 설정
 param_grid = {
         'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
-        'learning_rate': [0.001, 0.01, 0.1, 0.2, 0.3],
+        #'learning_rate': [0.001, 0.01, 0.05, 0.1, 0.2, 0.3],
+        'learning_rate' : [0.01, 0.015,0.02,0.025,0.03,0.035,0.04,0.045,0.05,0.055,0.06,0.065,0.07,0.075,0.08,0.085,0.09,0.095,0.1,0.15,0.2],
         'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
@@ -300,83 +359,11 @@ param_grid = {
         'gamma': [0, 0.25, 0.5, 1.0],
         'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
 
-"""
-xgbtuned = xgb.XGBRegressor()
-tscv = TimeSeriesSplit(n_splits=5)
-xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
-                                   scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
-                                   cv=tscv, verbose=2, random_state=42)
-
-X_train = train_df_final.drop(['y', 'day'], axis=1)
-y_train = train_df_final.y
-
-X_test = test_df_xgb_final.drop(['y', 'day'], axis=1)
-y_test = test_df_xgb_final.y
-
-X_test.columns
-X_train.columns
-
-xgbtunedreg.fit(X_train, y_train)
-
-best_score = xgbtunedreg.best_score_
-best_params = xgbtunedreg.best_params_
-print("Best score: {}".format(best_score))
-print("Best params: {}".format(best_params))
-
-# Best params: {'subsample': 0.9, 'n_estimators': 31, 'min_child_weight': 3.0, 'max_depth': 4, 'learning_rate': 0.2, 'gamma': 1.0, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.9}
-preds_boost_tuned = xgbtunedreg.predict(X_test)
-"""
-# _ = error_metrics(preds_boost_tuned, y_test, model_name='Tuned XGBoost with Fourier terms', test=True)
-"""
-Error metrics for model Tuned XGBoost with Fourier terms
-RMSE or Root mean squared error: 109.57
-Variance score: 0.53
-Mean Absolute Error: 86.00
-Mean Absolute Percentage Error: 53.15 %
-"""
-
-# _ = error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
-"""
-Error metrics for model Tuned XGBoost with Fourier terms
-RMSE or Root mean squared error: 119.84
-Variance score: 0.48
-Mean Absolute Error: 89.67
-Mean Absolute Percentage Error: 71.52 %
-"""
-
-def xgboost_cross_validation(train_df, test_df, params) :
-
-    xgbtuned = xgb.XGBRegressor()
-    tscv = TimeSeriesSplit(n_splits=5)
-    xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=params , 
-                                   scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
-                                   cv=tscv, verbose=2, random_state=42)
-
-    X_train = train_df.drop('y', axis=1)
-    y_train = train_df.y
-
-    X_test = test_df.drop('y', axis=1)
-    y_test = test_df.y
-
-    xgbtunedreg.fit(X_train, y_train)
-    
-    best_score = xgbtunedreg.best_score_
-    best_params = xgbtunedreg.best_params_
-    print("Best score: {}".format(best_score))
-    print("Best params: {}".format(best_params))
-
-    preds_boost_tuned = xgbtunedreg.predict(X_test)
-
-    error_metrics(preds_boost_tuned, y_test, model_name='Tuned XGBoost with Fourier terms', test=True)
-    #error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
-
-    return preds_boost_tuned, X_test
-
 #########################################################################################
-## lag 168 + fourier + rolling mean, std 
+## RandomizedSearchCV
 #########################################################################################
 
-train_df_final = train_df_Imputed.copy()
+train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
 ## lag variable 생성
@@ -386,47 +373,67 @@ for i in range(24):
 for i in range(24):
     test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
 
+
+# 불필요한 컬럼 삭제
 train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 train_df_lag = train_df_lag.dropna()
 test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 
-def add_feature(df) :
-
-    #df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
-    #df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
-    #df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
-
-    #df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
-    #df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
-    #df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
-
-    df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
-    df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
-    df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
-
-    df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
-    df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
-    df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
-    
-    #df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
-    #df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
-    #df['rolling_24_med'] = df['y'].shift(1).rolling(24).median()
-
-    return df
-
+# fourier항 추가
 test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+#train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k =12, day_k =12)
+#test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
 
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 9, week_k = 9, day_k =12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 9, week_k=9, day_k=12)
+
+# rolling feature 추가
 train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
 train_df_mul.dropna(inplace=True)
 
-train_df_mul.columns
+train_df_mul = train_df_mul.drop(['hour_cos12', 'week_cos7'], axis=1)
+test_df_mul = test_df_mul.drop(['hour_cos12', 'week_cos7'], axis=1)
 
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
+train_df_mul.shape
+test_df_mul.shape
+
+train_df_mul.columns.values
+
+pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid, n_iter=500)
+
+"""
+all_feature : Best params: {'subsample': 0.6, 'n_estimators': 115, 'min_child_weight': 3.0, 'max_depth': 4, 'learning_rate': 0.1, 'gamma': 0.25, 'colsample_bytree': 0.7, 'colsample_bylevel': 0.9}
+all_feature - zero importance
+= {'subsample': 0.8, 'n_estimators': 115, 'min_child_weight': 10.0, 'max_depth': 6, 'learning_rate': 0.05, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.8}
+"""
+
+###### test
+Best_params =  {'subsample': 1.0, 'n_estimators': 157, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.05999999999999999, 'gamma': 1.0, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
+
+xgbtuned = xgb.XGBRegressor(**Best_params) 
+
+X_train = train_df_mul.drop('y', axis=1)
+y_train = train_df_mul.y
+
+X_test = test_df_mul.drop('y', axis=1)
+y_test = test_df_mul.y
+
+xgbtuned.fit(X_train, y_train)
+preds_y = xgbtuned.predict(X_test)
+
+mae = mean_absolute_error(y_test, preds_y)
+print(mae)
+
+x, y = zip(*sorted(zip(xgbtuned.feature_importances_, X_train.columns.values)))
+x
+y
+"""
+'hour_cos12', 'hour_cos4', 'hour_cos8', 'hour_sin11', 'season_winter', 'time_morning', 'week_cos10', 'week_cos11', 'week_cos12', 'week_cos4', 'week_cos5', 'week_cos7', 'week_cos8'
+, 'week_cos9', 'week_sin10', 'week_sin11', 'week_sin12', 'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'
+"""
 
 result = []
 for iter in range(len(X_test)-336) :
@@ -441,45 +448,12 @@ result.columns = sample_df.columns
 
 result.to_csv('result/xgb_lag_mul_fourier.csv')
 
-#########################################################################################
-## lag 168 + fourier + rolling mean, std 
-#########################################################################################
-
-train_df_final = train_df_Interpolation_time.copy()
-test_df_final = test_df_xgb.copy()
-
-## lag variable 생성
-def add_lag(train_df_final, test_df_final) :
-    for i in range(24):
-        train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
-
-    for i in range(24):
-        test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
-
-    return train_df_final, test_df_final
-
-train_df_lag, test_df_lag = add_lag(train_df_final, test_df_final)
-
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
-       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
-train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
-       'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
-
-test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
-
-train_df_mul = add_feature(train_df_lag)
-test_df_mul = add_feature(test_df_lag)
-train_df_mul.dropna(inplace=True)
-
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
-
-##########################################################################################
+################################
+# best model
+################################
 
 xgbtuned = xgb.XGBRegressor(subsample=0.9, n_estimators=115, min_child_weight=7.0, max_depth=6, learning_rate=0.045, gamma=0.25, colsample_bytree=0.9,
-                            colsample_bylevel=0.5)
+                            colsample_bylevel=0.5)                           
 
 X_train = train_df_mul.drop('y', axis=1)
 y_train = train_df_mul.y
@@ -491,6 +465,8 @@ xgbtuned.fit(X_train, y_train)
 preds_y = xgbtuned.predict(X_test)
 mae = mean_absolute_error(y_test, preds_y)
 print(mae)
+
+joblib.dump(xgbtuned, 'result/best_model_now.pkl')
 
 result = []
 for iter in range(len(X_test)-336) :
@@ -512,7 +488,24 @@ result.to_csv('result/xgb_hyper_comp.csv')
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
+<<<<<<< HEAD
 def make_result(train_df, test_df) :
+=======
+param_grid = {
+        'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
+        'learning_rate': np.arange(0.001, 0.3, 0.005),
+        'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+        'min_child_weight': [0.5, 1.0, 3.0, 5.0, 7.0, 10.0],
+        'gamma': [0, 0.25, 0.5, 1.0],
+        'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
+
+# learning_rate : [0.001, 0.01, 0.025, 0.05, 0.075, 0.1, 0.2, 0.3] -> 78.x
+# learning_rate : np.arange(0.01, 0.2, 0.01) -> 77.6396
+
+def make_result(train_df, test_df, param_grid, n_iter) :
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 
     ## lag variable 생성
     for i in range(24):
@@ -541,68 +534,45 @@ def make_result(train_df, test_df) :
     X_test = test_df_mul.drop('y', axis=1)
     y_test = test_df_mul.y
 
-    # Best params: {'subsample': 0.9, 'n_estimators': 115, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.04, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
+    print(X_train.shape, y_train.shape, X_test.shape, y_test.shape)
+
     # model 생성
-    xgbtuned = xgb.XGBRegressor()
+    xgbtuned = xgb.XGBRegressor(tree_method='gpu_hist',random_state=42)
     tscv = TimeSeriesSplit(n_splits=5)
     xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=param_grid , 
-                                    scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                    scoring='neg_mean_absolute_error', n_iter=n_iter, n_jobs=-1, 
                                     cv=tscv, verbose=2, random_state=42)
     
     # model 데이터 생성
     pred_y = pd.DataFrame([])
-    
-    for iter in range(len(X_test)//336) :
-        if iter == 0 :
-            X_test = X_test[:336*(1+iter)]
-
-            xgbtunedreg.fit(X_train, y_train)
-            preds= xgbtunedreg.predict(X_test)
-            pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+    batch_size = 2000
+    best_params = []
         
-        else :
-            X_train_add = X_train[:iter*336]
-            X_train.dropna(inplace=True)
-            y_train_add = y_test[:iter*336]
-            X_train = pd.concat([X_train,X_train_add], axis=0)
+    for iter in range(len(X_test)//batch_size) :
+        if iter == 0 :
+            test = X_test[:batch_size*(1+iter)]
+
+            xgbtunedreg.fit(X_train, y_train, verbose=True)
+            preds= xgbtunedreg.predict(test)
+            pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+
+            best_params.append(xgbtunedreg.best_params_)
+            joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
+
+        elif iter == (len(X_test)//batch_size)-1 :
+
+            X_train_add = X_test[(iter-1)*batch_size:iter*batch_size]
+            y_train_add = y_test[(iter-1)*batch_size:iter*batch_size]
+            X_train = pd.concat([X_train, X_train_add], axis=0)
             y_train = pd.concat([y_train, y_train_add], axis=0)
 
-            X_test = X_test[(iter-1)*336:336*(1+iter)]
+            test = X_test[(iter)*batch_size:]
 
-            xgbtunedreg.fit(X_train, y_train)
-            preds = xgbtunedreg.predict(X_test)
+            xgbtunedreg.fit(X_train, y_train, verbose=True)
+            preds = xgbtunedreg.predict(test)
             pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
 
-    return pred_y
-
-
-## lag variable 생성
-for i in range(24):
-    train_df_final['lag'+str(i+1)] = train_df_final['y'].shift(i+1)
-
-for i in range(24):
-    test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
-
-train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
-    'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
-train_df_lag = train_df_lag.dropna()
-test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
-    'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
-
-test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k=12, day_k=12)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
-
-train_df_mul = add_feature(train_df_lag)
-test_df_mul = add_feature(test_df_lag)
-train_df_mul.dropna(inplace=True)
-
-X_train = train_df_mul.drop('y', axis=1)
-y_train = train_df_mul.y
-
-X_test = test_df_mul.drop('y', axis=1)
-y_test = test_df_mul.y
-
+<<<<<<< HEAD
 # Best params: {'subsample': 0.9, 'n_estimators': 115, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.04, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
 # model 생성
 
@@ -643,13 +613,15 @@ for iter in range(len(X_test)//336) :
         #X_train.dropna(inplace=True)
         #y_train_add = y_test[:iter*336]
         #X_train = pd.concat([X_train,X_train_add], axis=0)
+=======
+            best_params.append(xgbtunedreg.best_params_)
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 
-        test = X_test[:336*(1+iter)]
+            joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
 
-        xgbtunedreg.fit(X_train, y_train, verbose=True)
-        preds= xgbtunedreg.predict(test)
-        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+            print('now step =', iter)
 
+<<<<<<< HEAD
         best_params.append(xgbtunedreg.best_params_)
 
         joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
@@ -660,15 +632,23 @@ for iter in range(len(X_test)//336) :
         y_train_add = y_test[:iter*336]
         X_train = pd.concat([X_train, X_train_add], axis=0)
         y_train = pd.concat([y_train, y_train_add], axis=0)
+=======
+        else :
+            X_train_add = X_test[(iter-1)*batch_size:iter*batch_size]
+            y_train_add = y_test[(iter-1)*batch_size:iter*batch_size]
+            X_train = pd.concat([X_train, X_train_add], axis=0)
+            y_train = pd.concat([y_train, y_train_add], axis=0)
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 
-        test = X_test[(iter)*336:]
+            test = X_test[(iter)*batch_size:batch_size*(1+iter)]
 
-        xgbtunedreg.fit(X_train, y_train, verbose=True)
-        preds = xgbtunedreg.predict(test)
-        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
+            xgbtunedreg.fit(X_train, y_train, verbose=True)
+            preds = xgbtunedreg.predict(test)
+            pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
 
-        print('now step =', iter)
+            best_params.append(xgbtunedreg.best_params_)
 
+<<<<<<< HEAD
         best_params.append(xgbtunedreg.best_params_)
 
         joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
@@ -678,23 +658,29 @@ for iter in range(len(X_test)//336) :
         y_train_add = y_test[(iter-1)*336:iter*336]
         X_train = pd.concat([X_train, X_train_add], axis=0)
         y_train = pd.concat([y_train, y_train_add], axis=0)
+=======
+            joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
+            
+            print('now step =', iter)
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 
-        test = X_test[(iter)*336:336*(1+iter)]
+    pred_y.reset_index(inplace=True)
+    pred_y.drop('index',axis=1,inplace=True)
 
-        xgbtunedreg.fit(X_train, y_train, verbose=True)
-        preds = xgbtunedreg.predict(test)
-        pred_y = pd.concat([pred_y, pd.Series(preds)],axis=0)
-        print('now step =', iter)
+    mae = mean_absolute_error(y_test, pred_y)
 
+<<<<<<< HEAD
         best_params.append(xgbtunedreg.best_params_)
 
         joblib.dump(xgbtunedreg, 'result/task1_xgb_model_'+str(iter)+'.pkl')
 
 mae = mean_absolute_error(y_test, pred_y)
+=======
+    return pred_y, best_params, mae
+    
+pred_y, best_params, mae = make_result(train_df_final, test_df_final, param_grid, n_iter=150)
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
 print(mae)
-
-pred_y.reset_index(inplace=True)
-pred_y.drop('index',axis=1,inplace=True)
 
 result = []
 for iter in range(len(X_test)-336) :
@@ -707,6 +693,10 @@ result = result.squeeze()
 result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
+<<<<<<< HEAD
 result.to_csv('task1_plus_train.csv')
 
 #보간법 대신 xgboost를 이용한 결측값 채우기도 가능한데 이때 사용된 regressor에 대한 feature importances를 구해볼 필요가 있음
+=======
+result.to_csv('task1_many_test.csv')
+>>>>>>> 9cd40e1fd865564c4c0a242b0bad8b3dcb331656
