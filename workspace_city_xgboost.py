@@ -122,12 +122,23 @@ def add_fourier_terms(df, year_k, week_k, day_k):
 
     return df
 
-def xgboost_cross_validation(train_df, test_df, params) :
+def add_hour_fourier(df, day_k) :
+
+    
+    for k in range(1, day_k+1):
+        
+        # day has period of 24
+        df['hour_sin'+str(k)] = np.sin(2 *k* np.pi * df.index.hour/24)
+        df['hour_cos'+str(k)] = np.cos(2 *k* np.pi * df.index.hour/24)
+
+    return df
+
+def xgboost_cross_validation(train_df, test_df, params, n_iter=100) :
 
     xgbtuned = xgb.XGBRegressor()
     tscv = TimeSeriesSplit(n_splits=5)
     xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=params , 
-                                   scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                   scoring='neg_mean_absolute_error', n_iter=n_iter, n_jobs=-1, 
                                    cv=tscv, verbose=2, random_state=42)
 
     X_train = train_df.drop('y', axis=1)
@@ -148,22 +159,9 @@ def xgboost_cross_validation(train_df, test_df, params) :
     error_metrics(preds_boost_tuned, y_test, model_name='Tuned XGBoost with Fourier terms', test=True)
     #error_metrics(xgbtunedreg.predict(X_train), y_train, model_name='Tuned XGBoost with Fourier terms', test=False)
 
-    x,y = zip(*sorted(zip(xgbtunedreg.feature_importances_, X_train.columns.values )))
-
-    plt.hbar(x,y)
-    plt.show()
-
     return preds_boost_tuned, X_test
 
 def add_feature(df) :
-
-    #df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
-    #df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
-    #df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
-
-    #df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
-    #df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
-    #df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
 
     df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
     df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
@@ -173,9 +171,15 @@ def add_feature(df) :
     df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
     df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
     
-    #df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
-    #df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
-    #df['rolling_24_med'] = df['y'].shift(1).rolling(24).median()
+    df['26ema'] = df['y'].shift(1).ewm(span=26).mean()
+    df['12ema'] = df['y'].shift(1).ewm(span=12).mean()
+    df['MACD'] = (df['12ema']-df['26ema'])
+
+    df['upper_band'] = df['rolling_24_mean'] + (df['rolling_24_std']*2)
+    df['lower_band'] = df['rolling_24_mean'] - (df['rolling_24_std']*2)
+    
+    # Create Exponential moving average
+    df['ema'] = df['y'].shift(1).ewm(com=0.5).mean()
 
     return df
 
@@ -340,7 +344,7 @@ from sklearn.model_selection import RandomizedSearchCV
 param_grid = {
         'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
         #'learning_rate': [0.001, 0.01, 0.05, 0.1, 0.2, 0.3],
-        'learning_rate' : np.arange(0.01, 0.1, 0.01),
+        'learning_rate' : [0.01, 0.015,0.02,0.025,0.03,0.035,0.04,0.045,0.05,0.055,0.06,0.065,0.07,0.075,0.08,0.085,0.09,0.095,0.1,0.15,0.2],
         'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
@@ -349,7 +353,7 @@ param_grid = {
         'n_estimators': [10, 31, 52, 73, 94, 115, 136, 157, 178, 200]}
 
 #########################################################################################
-## lag 168 + fourier + rolling mean, std 
+## RandomizedSearchCV
 #########################################################################################
 
 train_df_final = train_df_Interpolation_time.copy()
@@ -362,6 +366,7 @@ for i in range(24):
 for i in range(24):
     test_df_final['lag'+str(i+1)] = test_df_final['y'].shift(i+1)
 
+
 # 불필요한 컬럼 삭제
 train_df_lag = train_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
@@ -371,17 +376,57 @@ test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','ti
 
 # fourier항 추가
 test_df_lag.index = pd.to_datetime(test_df_lag.index)
-train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k =12, day_k =12)
-test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+#train_df_lag = add_fourier_terms(train_df_lag, year_k= 12, week_k =12, day_k =12)
+#test_df_lag = add_fourier_terms(test_df_lag, year_k= 12, week_k=12, day_k=12)
+
+train_df_lag = add_fourier_terms(train_df_lag, year_k= 9, week_k = 9, day_k =12)
+test_df_lag = add_fourier_terms(test_df_lag, year_k= 9, week_k=9, day_k=12)
 
 # rolling feature 추가
 train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
 train_df_mul.dropna(inplace=True)
 
-train_df_mul.columns
+train_df_mul = train_df_mul.drop(['hour_cos12', 'week_cos7'], axis=1)
+test_df_mul = test_df_mul.drop(['hour_cos12', 'week_cos7'], axis=1)
 
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
+train_df_mul.shape
+test_df_mul.shape
+
+train_df_mul.columns.values
+
+pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid, n_iter=500)
+
+"""
+all_feature : Best params: {'subsample': 0.6, 'n_estimators': 115, 'min_child_weight': 3.0, 'max_depth': 4, 'learning_rate': 0.1, 'gamma': 0.25, 'colsample_bytree': 0.7, 'colsample_bylevel': 0.9}
+all_feature - zero importance
+= {'subsample': 0.8, 'n_estimators': 115, 'min_child_weight': 10.0, 'max_depth': 6, 'learning_rate': 0.05, 'gamma': 0.25, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.8}
+"""
+
+###### test
+Best_params =  {'subsample': 1.0, 'n_estimators': 157, 'min_child_weight': 7.0, 'max_depth': 6, 'learning_rate': 0.05999999999999999, 'gamma': 1.0, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.5}
+
+xgbtuned = xgb.XGBRegressor(**Best_params) 
+
+X_train = train_df_mul.drop('y', axis=1)
+y_train = train_df_mul.y
+
+X_test = test_df_mul.drop('y', axis=1)
+y_test = test_df_mul.y
+
+xgbtuned.fit(X_train, y_train)
+preds_y = xgbtuned.predict(X_test)
+
+mae = mean_absolute_error(y_test, preds_y)
+print(mae)
+
+x, y = zip(*sorted(zip(xgbtuned.feature_importances_, X_train.columns.values)))
+x
+y
+"""
+'hour_cos12', 'hour_cos4', 'hour_cos8', 'hour_sin11', 'season_winter', 'time_morning', 'week_cos10', 'week_cos11', 'week_cos12', 'week_cos4', 'week_cos5', 'week_cos7', 'week_cos8'
+, 'week_cos9', 'week_sin10', 'week_sin11', 'week_sin12', 'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'
+"""
 
 result = []
 for iter in range(len(X_test)-336) :
@@ -397,15 +442,11 @@ result.columns = sample_df.columns
 result.to_csv('result/xgb_lag_mul_fourier.csv')
 
 ################################
+# best model
+################################
 
 xgbtuned = xgb.XGBRegressor(subsample=0.9, n_estimators=115, min_child_weight=7.0, max_depth=6, learning_rate=0.045, gamma=0.25, colsample_bytree=0.9,
                             colsample_bylevel=0.5)                           
-
-# Best params: {'subsample': 0.5, 'n_estimators': 178, 'min_child_weight': 1.0, 'max_depth': 5, 'learning_rate': 0.05,
-                # 'gamma': 0.5, 'colsample_bytree': 0.5, 'colsample_bylevel': 0.4, 'booster': 'dart'}
-
-xgbtuned = xgb.XGBRegressor(subsample=0.5, n_estimators=178, min_child_weight=1.0, max_depth=5, learning_rate=0.05, gamma=0.5, colsample_bytree=0.5,
-                            colsample_bylevel=0.4, booster='dart')   
 
 X_train = train_df_mul.drop('y', axis=1)
 y_train = train_df_mul.y
@@ -418,7 +459,7 @@ preds_y = xgbtuned.predict(X_test)
 mae = mean_absolute_error(y_test, preds_y)
 print(mae)
 
-
+joblib.dump(xgbtuned, 'result/best_model_now.pkl')
 
 result = []
 for iter in range(len(X_test)-336) :
