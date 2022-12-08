@@ -7,39 +7,30 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-
-from pandas.tseries.holiday import USFederalHolidayCalendar as calendar
-import matplotlib.dates as mdates
 import copy
 plt.style.use('bmh')
-import plotly.graph_objects as go
-from sklearn.model_selection import TimeSeriesSplit
-from sklearn.preprocessing import StandardScaler
-from sklearn.preprocessing import OneHotEncoder
 
-from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 import random
 random.seed(42)
 
 import xgboost as xgb
+import joblib
 from sklearn.model_selection import RandomizedSearchCV
-
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.pipeline import Pipeline
 
 ##################
 ## help function
 ###################
 dict_error = dict()
 
-def xgboost_cross_validation(train_df, test_df, params) :
+def xgboost_cross_validation(train_df, test_df, params, n_iter=100) :
 
     xgbtuned = xgb.XGBRegressor()
     tscv = TimeSeriesSplit(n_splits=5)
     xgbtunedreg = RandomizedSearchCV(xgbtuned, param_distributions=params , 
-                                   scoring='neg_mean_squared_error', n_iter=20, n_jobs=-1, 
+                                   scoring='neg_mean_absolute_error', n_iter=n_iter, n_jobs=-1, 
                                    cv=tscv, verbose=2, random_state=42)
 
     X_train = train_df.drop('y', axis=1)
@@ -160,6 +151,62 @@ def add_fourier_terms(df, year_k, week_k, day_k):
 
     return df
 
+# help function
+def missing_value_func(df, method, window = 5, halflife = 4) :
+    df_copy = copy.deepcopy(df)
+    if method == 'ffill' :
+        df_copy['y'] = df_copy['y'].fillna(method = method)
+    elif method == 'bfill' :
+        df_copy['y'] = df_copy['y'].fillna(method = method)
+    elif method == 'SMA' :
+        df_copy['y'] = df_copy['y'].rolling(window=window, min_periods=1).mean()
+    elif method == 'WMA' :
+        df_copy['y'] = df_copy['y'].ewm(halflife=halflife).mean()
+    elif method == 'linear' :
+        df_copy['y'] = df_copy['y'].interpolate(option=method)
+    elif method == 'spline' :
+        df_copy['y'] = df_copy['y'].interpolate(option=method)
+    else :
+        df_copy['y'] = df_copy['y'].interpolate(option=method)
+    df_copy = df_copy.dropna()
+    return df_copy
+
+def add_feature(df) :
+
+    df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
+    df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
+    df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
+
+    df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
+    df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
+    df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
+
+    """
+    # band
+    df['upper_band_24'] = df['rolling_24_mean'] + (df['rolling_24_std']*2)
+    df['lower_band_24'] = df['rolling_24_mean'] - (df['rolling_24_std']*2)
+    
+    df['upper_band_12'] = df['rolling_12_mean'] + (df['rolling_12_std']*2)
+    df['lower_band_12'] = df['rolling_12_mean'] - (df['rolling_12_std']*2)
+
+    df['upper_band_6'] = df['rolling_6_mean'] + (df['rolling_6_std']*2)
+    df['lower_band_6'] = df['rolling_6_mean'] - (df['rolling_6_std']*2)
+     """
+    # MACD
+
+    df['ema'] = df['y'].shift(1).ewm(com=0.5).mean()
+
+    """
+    df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
+    df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
+    df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
+
+    df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
+    df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
+    df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
+    """
+    return df
+
 
 #####################
 ## data import
@@ -209,7 +256,7 @@ def feature_preprocessing(train_df) :
     # train_df.drop(['weekday'], inplace=True, axis=1)
 
     # dtype 변경
-    cat_cols = ['time_of_day','season','time','weekday','holiday','warning']
+    cat_cols = ['time_of_day','season','time','holiday','warning']
     #cat_cols = ['hour','weekday','time_of_day']
     for col in cat_cols:
         train_df[col] = train_df[col].astype('category')
@@ -247,26 +294,6 @@ test_df_xgb.set_index('ds',inplace=True)
 #train_df['y'].plot()
 #plt.show()
 
-# help function
-def missing_value_func(df, method, window = 5, halflife = 4) :
-    df_copy = copy.deepcopy(df)
-    if method == 'ffill' :
-        df_copy['y'] = df_copy['y'].fillna(method = method)
-    elif method == 'bfill' :
-        df_copy['y'] = df_copy['y'].fillna(method = method)
-    elif method == 'SMA' :
-        df_copy['y'] = df_copy['y'].rolling(window=window, min_periods=1).mean()
-    elif method == 'WMA' :
-        df_copy['y'] = df_copy['y'].ewm(halflife=halflife).mean()
-    elif method == 'linear' :
-        df_copy['y'] = df_copy['y'].interpolate(option=method)
-    elif method == 'spline' :
-        df_copy['y'] = df_copy['y'].interpolate(option=method)
-    else :
-        df_copy['y'] = df_copy['y'].interpolate(option=method)
-    df_copy = df_copy.dropna()
-    return df_copy
-
 # ffill()을 이용한 채우기
 
 train_df_ffill = missing_value_func(train_df, 'ffill')
@@ -296,13 +323,14 @@ train_df_Interpolation_spline = missing_value_func(train_df,'spline')
 train_df_Interpolation_time = missing_value_func(train_df, 'time')
 
 
+
 ################################################################################
 train_df_final = train_df_Interpolation_time.copy()
 test_df_final = test_df_xgb.copy()
 
 param_grid = {
         'max_depth': [3, 4, 5, 6, 7, 8, 9, 10],
-        'learning_rate': [0.001, 0.01, 0.1, 0.2, 0.3],
+        'learning_rate': [0.001, 0.01, 0.05, 0.1, 0.2, 0.3],
         'subsample': [0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bytree': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
         'colsample_bylevel': [0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
@@ -323,30 +351,6 @@ train_df_lag = train_df_lag.dropna()
 test_df_lag = test_df_final.drop(['day','rain','time_evening','time_morning','time_night','dayofyear','weekday_Monday', 'weekday_Saturday', 'weekday_Sunday',
        'weekday_Thursday', 'weekday_Tuesday', 'weekday_Wednesday'], axis=1)
 
-def add_feature(df) :
-
-    #df['rolling_6_min'] = df['y'].shift(1).rolling(6).min()
-    #df['rolling_12_min'] = df['y'].shift(1).rolling(12).min()
-    #df['rolling_24_min'] = df['y'].shift(1).rolling(24).min()
-
-    #df['rolling_6_max'] = df['y'].shift(1).rolling(6).max()
-    #df['rolling_12_max'] = df['y'].shift(1).rolling(12).max()
-    #df['rolling_24_max'] = df['y'].shift(1).rolling(24).max()
-
-    df['rolling_6_mean'] = df['y'].shift(1).rolling(6).mean()
-    df['rolling_12_mean'] = df['y'].shift(1).rolling(12).mean()
-    df['rolling_24_mean'] = df['y'].shift(1).rolling(24).mean()
-
-    df['rolling_6_std'] = df['y'].shift(1).rolling(6).std()
-    df['rolling_12_std'] = df['y'].shift(1).rolling(12).std()
-    df['rolling_24_std'] = df['y'].shift(1).rolling(24).std()
-    
-    #df['rolling_6_med'] = df['y'].shift(1).rolling(6).median()
-    #df['rolling_12_med'] = df['y'].shift(1).rolling(12).median()
-    #df['rolling_24_med'] = df['y'].shift(1).rolling(24).median()
-
-    return df
-
 test_df_lag.index = pd.to_datetime(test_df_lag.index)
 train_df_lag = add_fourier_terms(train_df_lag, year_k= 11, week_k=12, day_k=12)
 test_df_lag = add_fourier_terms(test_df_lag, year_k= 11, week_k=12, day_k=12)
@@ -355,9 +359,7 @@ train_df_mul = add_feature(train_df_lag)
 test_df_mul = add_feature(test_df_lag)
 train_df_mul.dropna(inplace=True)
 
-train_df_mul.columns
-
-pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid)
+pred_y, X_test = xgboost_cross_validation(train_df_mul, test_df_mul, param_grid, n_iter=100)
 
 result = []
 for iter in range(len(X_test)-336) :
@@ -370,4 +372,35 @@ result = np.array(result)
 result = pd.DataFrame(result, index=X_test.index[:8425])
 result.columns = sample_df.columns
 
-result.to_csv('result/task2_xgb_hyper_comp.csv')
+# result.to_csv('result/task2_now_best.csv')
+
+########################################################
+
+Best_params = {'subsample': 1.0, 'n_estimators': 115, 'min_child_weight': 0.5, 'max_depth': 10, 'learning_rate': 0.1, 'gamma': 0, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.9}
+
+# {'subsample': 0.9, 'n_estimators': 157, 'min_child_weight': 0.5, 'max_depth': 9, 'learning_rate': 0.05, 'gamma': 1.0, 'colsample_bytree': 0.9, 'colsample_bylevel': 0.7}
+xgbtuned = xgb.XGBRegressor(**Best_params)
+
+X_train = train_df_mul.drop('y', axis=1)
+y_train = train_df_mul.y
+
+X_test = test_df_mul.drop('y', axis=1)
+y_test = test_df_mul.y
+
+xgbtuned.fit(X_train,y_train)
+pred = xgbtuned.predict(X_test)
+
+mae = mean_absolute_error(y_test,pred)
+print(mae)
+
+# joblib.dump(xgbtuned, 'result/task2_best_now.pkl')
+
+x, y = zip(*sorted(zip(xgbtuned.feature_importances_, X_train.columns.values)))
+
+model = joblib.load('result/task2_best_now.pkl')
+importance = model.feature_importances_
+name = model.feature_names_in_
+
+
+
+
